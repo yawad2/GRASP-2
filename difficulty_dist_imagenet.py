@@ -1,8 +1,7 @@
 import wandb
-import torch
 import numpy as np
 import sys
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 import matplotlib.pyplot as plt
@@ -11,14 +10,22 @@ from MNModel_derpp import MNModel, _set_seed
 from utils_dr import Counter
 import seaborn as sns
 
+class IndexedImageFolder(Dataset):
+    def __init__(self, root, transform):
+        """
+        A wrapper around ImageFolder to include indices
+        """
+        self.dataset = ImageFolder(root=root, transform=transform)
+        self.classes = self.dataset.classes
+        self.class_to_idx = self.dataset.class_to_idx
 
-# ImageFolder wrapper that returns the index of the image
-class IndexedImageFolder(ImageFolder):
     def __getitem__(self, index):
-        # Retrieve the image and label from the parent class
-        image, label = super().__getitem__(index)
-        # Return the image, label, and index
+        # Retrieve image and label from the dataset
+        image, label = self.dataset[index]
         return image, label, index
+
+    def __len__(self):
+        return len(self.dataset)
     
 def main():
     # Initialize wandb
@@ -32,10 +39,13 @@ def main():
     ])
 
     # Create dataset and data loader for train data
-    folder_paths = ['./imagenet100/train.X1', './imagenet100/train.X2', './imagenet100/train.X3', './imagenet100/train.X4']
-    datasets = [IndexedImageFolder(root=path, transform=transform) for path in folder_paths]
-    train_dataset = ConcatDataset(datasets)  # Combine the datasets
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
+    folder_path = './imagenet100/train'
+    train_dataset = IndexedImageFolder(root=folder_path, transform=transform)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=False, num_workers=4)
+    
+    # DEBUG: check classes were loaded correctly
+    print(f"Classes in train dataset: {train_dataset.classes}")
+    print(f"Number of images per class in train dataset: {train_dataset.class_to_idx}")
 
     ######### EXPERIMENT SETUP #########
     data_loader = train_loader
@@ -62,7 +72,14 @@ def main():
         class_id_dist=class_id_dist, 
         counter=counter
     )
+    print("class_id_to_item_ix_dict:")
+    for class_id, indices in class_id_to_item_ix_dict.items():
+        print(f"Class {class_id}: {len(indices)} indices, Example indices: {indices[:5]}")
 
+    print("class_id_dist:")
+    for class_id, distances in class_id_dist.items():
+        print(f"Class {class_id}: {len(distances)} difficulty scores, Example distances: {distances[:5]}")
+    
     # Initial difficulty distribution histogram
     difficulty_scores = [score for scores in class_id_dist.values() for score in scores]
     bins = int(np.sqrt(len(difficulty_scores)))
@@ -131,6 +148,7 @@ def main():
         title="Average Difficulty Evolution",
         xname="Iteration"
     )})
+    
     # Create and log heat map showing the selection frequency across difficulty bins
     plt.figure(figsize=(10, 8))
     sns.heatmap(heatmap_data, cmap="YlGnBu", xticklabels=np.round(bin_edges, 2), yticklabels=range(10))
